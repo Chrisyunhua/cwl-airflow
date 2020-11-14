@@ -182,7 +182,7 @@ def collect_reports(
                 job_data,
                 load_yaml(report_location)
             )
-    
+
     return job_data
 
 
@@ -241,15 +241,15 @@ def get_default_cwl_args(preset_cwl_args=None):
                 preset_cwl_args.get("no_match_user", CWL_NO_MATCH_USER)            # disables passing the current uid to "docker run --user"
             ),
             "skip_schemas": conf_get(
-                "cwl", "skip_schemas", 
+                "cwl", "skip_schemas",
                 preset_cwl_args.get("skip_schemas", CWL_SKIP_SCHEMAS)              # it looks like this doesn't influence anything in the latest cwltool
             ),
             "strict": conf_get(
-                "cwl", "strict", 
+                "cwl", "strict",
                 preset_cwl_args.get("strict", CWL_STRICT)
             ),
             "quiet": conf_get(
-                "cwl", "quiet", 
+                "cwl", "quiet",
                 preset_cwl_args.get("quiet", CWL_QUIET)
             ),
             "rm_tmpdir": preset_cwl_args.get("rm_tmpdir", CWL_RM_TMPDIR),          # even if we can set it in "preset_cwl_args" it's better not to change
@@ -292,7 +292,7 @@ def relocate_outputs(
     # Filter "job_data" to include only items required by workflow outputs.
     # Remap keys to the proper workflow outputs IDs (without step id).
     # If "outputSource" was a list even of len=1, find all correspondent items
-    # from the "job_data" and assign them as list of the same size. 
+    # from the "job_data" and assign them as list of the same size.
     job_data_copy = deepcopy(job_data)
     filtered_job_data = {}
     for output_id, output_data in get_items(workflow_tool["outputs"]):
@@ -380,6 +380,18 @@ def kill_containers(containers):
             logging.error(f"Failed to kill container. \n {err}")
 
 
+def get_logger_file_stream(name: str):
+    from airflow.utils.log.file_task_handler import FileTaskHandler
+
+    logger = logging.getLogger(name)
+    for handler in logger.handlers:
+        if isinstance(handler, logging.FileHandler):
+            return handler.stream
+        if isinstance(handler, FileTaskHandler):
+            return handler.handler.stream
+    return None
+
+
 def execute_workflow_step(
     workflow,
     task_id,
@@ -412,7 +424,7 @@ def execute_workflow_step(
         "basedir": os.getcwd(),                        # job should already have abs path for inputs, so this is useless
         "outdir": step_outputs_folder
     })
-    
+
     workflow_step_path = os.path.join(
         step_tmp_folder, task_id + "_step_workflow.cwl"
     )
@@ -424,8 +436,15 @@ def execute_workflow_step(
         location=workflow_step_path
     )
 
-    _stderr = sys.stderr                               # to trick the logger	
-    sys.stderr = sys.__stderr__
+    _stderr = sys.stderr                               # to trick the logger
+    logger_file_stream = get_logger_file_stream("airflow.task")
+    if logger_file_stream:
+        sys.stderr = logger_file_stream
+        logging.info(f"Redirect stderr to airflow.task logger file")
+    else:
+        sys.stderr = sys.__stderr__
+        logging.warning(f"Not redirect stderr, task output would be lost!")
+
     step_outputs, step_status = executor(
         slow_cwl_load(
             workflow=workflow_step_path,
@@ -433,6 +452,7 @@ def execute_workflow_step(
         job_data,
         RuntimeContext(default_cwl_args)
     )
+
     sys.stderr = _stderr
 
     if step_status != "success":
@@ -504,12 +524,12 @@ def load_job(
     is set to False in both places). This will prevent rasing an exception by
     schema salad in those cases when an input file will be created from the
     provided content during workflow execution.
-    
+
     Always returns CommentedMap
     """
-    
+
     cwl_args = {} if cwl_args is None else cwl_args
-    
+
     default_cwl_args = get_default_cwl_args(cwl_args)
     cwd = default_cwl_args["inputs_folder"] if cwd is None else cwd
 
@@ -536,7 +556,7 @@ def load_job(
         job_order_object=job_data,
         args=argparse.Namespace(**default_cwl_args),
         process=slow_cwl_load(
-            workflow=workflow, 
+            workflow=workflow,
             cwl_args=default_cwl_args
         ),
         loader=loading_context.loader,
@@ -553,7 +573,7 @@ def fast_cwl_step_load(workflow, target_id, cwl_args=None, location=None):
     are removed. Workflow inputs and outputs are updated based on
     source fields of "in" and "out" from the selected workflow step.
     If selected step includes "scatter" field all output types will
-    be transformed to the nested/flat array of items of the same type. 
+    be transformed to the nested/flat array of items of the same type.
     IDs of updated workflow inputs and outputs as well as IDs of
     correspondent "source" fields also include step id separated by
     underscore. All other fields remain unchanged.
@@ -583,7 +603,7 @@ def fast_cwl_step_load(workflow, target_id, cwl_args=None, location=None):
     workflow_steps.append(selected_step)
 
     for _, step_in in get_items(selected_step.get("in", [])):           # step might not have "in"
-        
+
         updated_sources = []  # to keep track of updated sources
 
         for step_in_source, _ in get_items(step_in.get("source", [])):  # "in" might not have "source"
@@ -620,7 +640,7 @@ def fast_cwl_step_load(workflow, target_id, cwl_args=None, location=None):
                 updated_sources.append(step_in_source)
 
             except (IndexError, KeyError):
-                
+
                 # Need to find upstream step that corresponds to "source"
 
                 upstream_step = list(get_items(
@@ -653,7 +673,7 @@ def fast_cwl_step_load(workflow, target_id, cwl_args=None, location=None):
                     upstream_step_output_type = upstream_step_output["type"]
 
                 updated_workflow_input = {
-                    "id": step_in_source_with_step_id,  
+                    "id": step_in_source_with_step_id,
                     "type": upstream_step_output_type
                 }
 
@@ -667,7 +687,7 @@ def fast_cwl_step_load(workflow, target_id, cwl_args=None, location=None):
 
                 if len(list(get_items(workflow_inputs, step_in_source_with_step_id))) == 0:
                     workflow_inputs.append(updated_workflow_input)
-                
+
                 updated_sources.append(step_in_source_with_step_id)
 
         # replace "source" in step's "in" if anything was updated
@@ -675,7 +695,7 @@ def fast_cwl_step_load(workflow, target_id, cwl_args=None, location=None):
             if isinstance(step_in["source"], list):
                 step_in["source"] = updated_sources
             else:
-                step_in["source"] = updated_sources[0]   
+                step_in["source"] = updated_sources[0]
 
     # Need to load tool from the "run" field of the selected step
     # and look for the outputs that correspond to the items from "out".
@@ -730,17 +750,17 @@ def fast_cwl_step_load(workflow, target_id, cwl_args=None, location=None):
 def get_items(data, target_id=None):
     """
     If data is dictionary returns [(key, value)].
-    
+
     If data is string return [key, data].
-    
+
     If data is list of items returns [(key, value)] with key set
     from item["id"] and value equal to the item itself.
 
     If items are strings, set keys from this strings and return [(key, item)].
-    
+
     For all other cases return either list of tuples of unchanged items or
     tuple with unchanged input data.
-    
+
     Keys are always shortened to include only part after symbol #
 
     If target_id is set, filter outputs by key == target_id if
@@ -751,11 +771,11 @@ def get_items(data, target_id=None):
         for key, value in data.items():
             if target_id is not None:
                 if key == target_id or get_short_id(key) == target_id:
-                    yield get_short_id(key), value 
+                    yield get_short_id(key), value
                 else:
                     continue
             else:
-                yield get_short_id(key), value 
+                yield get_short_id(key), value
     elif isinstance(data, MutableSequence):
         for item in data:
             if isinstance(item, str):
@@ -831,7 +851,7 @@ def fast_cwl_load(workflow, cwl_args=None):
     md5 sum of the "workflow" file. "cwl_args" can be used to update
     default location of "pickle_folder" as well as other parameters
     used by "slow_cwl_load" for loading and runtime contexts.
-    
+
     If pickled file not found or failed to unpickle, load tool from
     the "workflow" using "slow_cwl_load" with "only_tool" set to True
     to return only tool. Returned tool will be pickled into "pickle_folder"
@@ -889,7 +909,7 @@ def slow_cwl_load(workflow, cwl_args=None, only_tool=None):
     removed automatically. First always try to uncompress, because
     it's faster.
     """
-    
+
     cwl_args = {} if cwl_args is None else cwl_args
     only_tool = False if only_tool is None else only_tool
 
