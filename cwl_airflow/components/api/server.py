@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import connexion
 from connexion.resolver import Resolver
+from flask_cors import CORS
 
 from cwl_airflow.components.api.backend import CWLApiBackend
 
@@ -13,6 +14,7 @@ def run_api_server(args):
         specification_dir="openapi",
         server="tornado"
     )
+    CORS(app.app)
     backend = CWLApiBackend()
     app.add_api(
         specification="swagger_configuration.yaml",

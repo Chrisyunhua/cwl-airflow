@@ -103,7 +103,8 @@ setup(
         "connexion",
         "tornado",
         "docker",
-        "swagger-ui-bundle"
+        "swagger-ui-bundle",
+        "flask_cors",
     ],
     zip_safe=False,
     scripts=["cwl_airflow/bin/cwl-airflow"],
