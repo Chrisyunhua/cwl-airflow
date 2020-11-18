@@ -49,6 +49,21 @@ paths:
           type: array
           items:
             type: string
+        - name: match
+          description: Match dag_id by this string which could be a regrex pattern
+          in: query
+          required: false
+          type: string
+        - name: limit
+          description: Limit the number of returned dags
+          in: query
+          required: false
+          type: integer
+        - name: offset
+          description: Skip the first `offset` dags
+          in: query
+          required: false
+          type: integer
       tags:
         - Airflow
     post:
@@ -93,6 +108,40 @@ paths:
         - name: workflow_content
           description: base64 encoded zlib compressed workflow content
           in: formData
+          required: false
+          type: string
+      tags:
+        - Airflow
+
+  /dags/count:
+    get:
+      summary: Returns the count of the dags
+      operationId: get_dags_count
+      responses:
+        "200":
+          description: Get count of dags filter by `match`
+          schema:
+            type: number
+        "400":
+          description: The request is malformed.
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+        "401":
+          description: The request is unauthorized.
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+        "403":
+          description: The requester is not authorized to perform this action.
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+        "500":
+          description: An unexpected error occurred.
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+      parameters:
+        - name: match
+          description: Match dag_id by this string which could be a regrex pattern
+          in: query
           required: false
           type: string
       tags:
@@ -178,6 +227,21 @@ paths:
             - running
             - success
             - failed
+        - name: match
+          description: Match dag_id by this string which could be a regrex pattern
+          in: query
+          required: false
+          type: string
+        - name: limit
+          description: Limit the number of returned dags
+          in: query
+          required: false
+          type: integer
+        - name: offset
+          description: Skip the first `offset` dags
+          in: query
+          required: false
+          type: integer
       tags:
         - Airflow
     post:
@@ -218,6 +282,40 @@ paths:
           type: string
         - name: conf
           description: Run configuration (JSON-formatted string)
+          in: query
+          required: false
+          type: string
+      tags:
+        - Airflow
+
+  /dag_runs/count:
+    get:
+      summary: Returns the count of the dag runs
+      operationId: get_dag_runs_count
+      responses:
+        "200":
+          description: Get count of dags filter by `match`
+          schema:
+            type: number
+        "400":
+          description: The request is malformed.
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+        "401":
+          description: The request is unauthorized.
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+        "403":
+          description: The requester is not authorized to perform this action.
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+        "500":
+          description: An unexpected error occurred.
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+      parameters:
+        - name: match
+          description: Match dag_id by this string which could be a regrex pattern
           in: query
           required: false
           type: string

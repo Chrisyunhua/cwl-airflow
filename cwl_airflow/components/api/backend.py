@@ -2,6 +2,7 @@ import base64
 import json
 import logging
 import random
+import re
 import shutil
 import string
 import tempfile
@@ -9,7 +10,7 @@ import zlib
 from os import environ, path
 from subprocess import DEVNULL, CalledProcessError, check_call
 from time import sleep
-from typing import Optional
+from typing import List, Optional
 
 import connexion
 import cwltool.load_tool as load  # TODO: use my functions instead
@@ -86,11 +87,19 @@ class CWLApiBackend:
             logging.error(f"Failed while running get_cwl_path {err}")
             return connexion.problem(500, "Failed to read cwl path", str(err))
 
-    def get_dags(self, dag_ids=[]):
+    def get_dags(
+        self,
+        dag_ids=[],
+        match: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ):
         logging.debug(f"Call get_dags with dag_ids={dag_ids}")
         try:
             dag_bag = DagBag(include_examples=self.include_examples)
-            dag_ids = dag_ids or self.list_dags(dag_bag=dag_bag)
+            dag_ids = dag_ids or self.list_dags(
+                dag_bag=dag_bag, match=match, sort=True, limit=limit, offset=offset
+            )
             logging.debug(f"Processing dags {dag_ids}")
             return {
                 "dags": [
@@ -105,6 +114,16 @@ class CWLApiBackend:
             logging.error(f"Failed while running get_dags {err}")
             return {"dags": []}
 
+    def get_dags_count(self, match: Optional[str] = None) -> int:
+        logging.debug(f"Call get_dags_count with match={match}")
+        try:
+            dag_bag = DagBag(include_examples=self.include_examples)
+            dag_ids = self.list_dags(dag_bag=dag_bag, match=match)
+            return len(dag_ids)
+        except Exception as err:
+            logging.error(f"Failed while running get_dags_count {err}")
+            return 0
+
     def post_dag(self, dag_id=None):
         logging.debug(f"Call post_dag with dag_id={dag_id}")
         try:
@@ -118,20 +137,41 @@ class CWLApiBackend:
             logging.error(f"Failed while running post_dag {err}")
             return connexion.problem(500, "Failed to create dag", str(err))
 
-    def get_dag_runs(self, dag_id=None, run_id=None, execution_date=None, state=None):
+    def get_dag_runs(
+        self,
+        dag_id=None,
+        run_id=None,
+        execution_date=None,
+        state=None,
+        match: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ):
         logging.debug(
-            f"Call get_dag_runs with dag_id={dag_id}, run_id={run_id}, execution_date={execution_date}, state={state}"
+            f"Call get_dag_runs with dag_id={dag_id}, "
+            f"run_id={run_id}, execution_date={execution_date}, state={state}, "
+            f"match={match}, limit={limit}, offset={offset}"
         )
         try:
             dag_runs = []
             dag_bag = DagBag(include_examples=self.include_examples)
-            dag_ids = [dag_id] if dag_id else self.list_dags(dag_bag=dag_bag)
+            dag_ids = (
+                [dag_id]
+                if dag_id
+                else self.list_dags(dag_bag=dag_bag, match=match, sort=True)
+            )
             logging.debug(f"Processing dags {dag_ids}")
+            num_skipped = 0
+            done = False
             for d_id in dag_ids:
                 logging.debug(f"Process dag  {d_id}")
                 task_ids = self.list_tasks(d_id, dag_bag=dag_bag)
                 logging.debug(f"Fetched tasks {task_ids}")
                 for dag_run in self.list_dag_runs(d_id, state):
+                    if len(dag_runs) == limit:
+                        done = True
+                        break
+
                     logging.debug(
                         f"Process dag run {dag_run['run_id']}, {dag_run['execution_date']}"
                     )
@@ -166,11 +206,28 @@ class CWLApiBackend:
                                 ),
                             }
                         )
-                    dag_runs.append(response_item)
+                    if offset is not None:
+                        if num_skipped < offset:
+                            num_skipped += 1
+                            continue
+                        else:
+                            dag_runs.append(response_item)
+                if done:
+                    break
             return {"dag_runs": dag_runs}
         except Exception as err:
             logging.error(f"Failed to call get_dag_runs {err}")
             return {"dag_runs": []}
+
+    def get_dag_runs_count(self, match: Optional[str] = None) -> int:
+        logging.debug(f"Call get_dag_runs_count with match={match}")
+        try:
+            dag_bag = DagBag(include_examples=self.include_examples)
+            dag_ids = self.list_dags(dag_bag=dag_bag, match=match)
+            return self.count_dag_runs(dag_ids=list(dag_ids))
+        except Exception as err:
+            logging.error(f"Failed while running get_dag_runs_count {err}")
+            return 0
 
     def post_dag_runs(self, dag_id, run_id=None, conf=None):
         logging.debug(
@@ -262,10 +319,30 @@ class CWLApiBackend:
             self.wait_until_dag_validated(path.join(DAGS_FOLDER, dag_id + ".py"))
             return self.create_dag_run(dag_id, run_id, conf)
 
-    def list_dags(self, dag_bag: Optional[DagBag] = None):
+    def list_dags(
+        self,
+        dag_bag: Optional[DagBag] = None,
+        match: Optional[str] = None,
+        sort=False,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ):
         if not dag_bag:
             dag_bag = DagBag(include_examples=self.include_examples)
-        return dag_bag.dags.keys()
+        if match is None:
+            ids = list(dag_bag.dags.keys())
+        else:
+            pattern = re.compile(match)
+            ids = [x for x in dag_bag.dags.keys() if re.match(pattern, x)]
+        if sort:
+            ids.sort()
+
+        if offset is not None:
+            ids = ids[offset:]
+        if limit is not None:
+            ids = ids[:limit]
+
+        return ids
 
     def list_tasks(self, dag_id, dag_bag: Optional[DagBag] = None):
         if not dag_bag:
@@ -297,6 +374,21 @@ class CWLApiBackend:
                 }
             )
         return dag_runs
+
+    @staticmethod
+    @provide_session
+    def count_dag_runs(
+        dag_ids: Optional[List[str]] = None, state: Optional[str] = None, session=None
+    ) -> int:
+        DR = DagRun
+
+        qry = session.query(DR)
+        if dag_ids:
+            qry = qry.filter(DR.dag_id.in_(dag_ids))
+        if state:
+            qry = qry.filter(DR.state == state)
+
+        return qry.order_by(DR.execution_date).count()
 
     def save_attachment(self, attachment, location, exist_ok=False):
         if path.isfile(location) and not exist_ok:
