@@ -1,4 +1,8 @@
+import base64
 import logging
+import re
+import zlib
+
 import connexion
 import random
 import string
@@ -13,7 +17,10 @@ from schema_salad.ref_resolver import Loader
 from time import sleep
 from werkzeug.utils import secure_filename
 from six import iterlists
-from os import path, environ
+from os import (
+    path,
+    environ,
+)
 from subprocess import check_call, CalledProcessError, DEVNULL
 
 from airflow.settings import DAGS_FOLDER, AIRFLOW_HOME
@@ -26,14 +33,14 @@ from cwl_airflow.utilities.helpers import (
     get_version,
     get_dir,
     get_compressed,
-    get_md5_sum
+    get_md5_sum,
 )
 from cwl_airflow.utilities.cwl import (
     conf_get,
     fast_cwl_load,
     slow_cwl_load,
     convert_to_workflow,
-    DAG_TEMPLATE
+    DAG_TEMPLATE,
 )
 
 
@@ -56,7 +63,7 @@ class CWLApiBackend():
     # curl -X POST "127.0.0.1:8081/wes/v1/dag_runs?dag_id=example_bash_operator&run_id=1234567&conf=%22%7B%7D%22" -H "accept: application/json"
     # curl -X POST "localhost:8081/wes/v1/dags?dag_id=bowtie2-indices" -H "accept: application/json" -H "Content-Type: multipart/form-data" -F "workflow=@bowtie2-indices.cwl"
     # curl -X POST "localhost:8081/wes/v1/dags/bowtie2-indices/dag_runs?run_id=bowtie2_indices_1&conf=%22%7B%7D%22" -H "accept: application/json"
-    
+
     # curl -X GET "127.0.0.1:8081/api/experimental/wes/service-info" -H "accept: application/json"
     # curl -X GET "127.0.0.1:8081/api/experimental/wes/runs" -H "accept: application/json"
     # curl -X POST "127.0.0.1:8081/api/experimental/wes/runs/pracfcizfvmhdefxqdomtxktkbflhgav/cancel" -H "accept: application/json"
@@ -72,6 +79,23 @@ class CWLApiBackend():
         self.dag_template_with_tmp_folder = "#!/usr/bin/env python3\nfrom cwl_airflow import CWLDAG, CWLJobDispatcher, CWLJobGatherer\ndag = CWLDAG(cwl_workflow='{0}', dag_id='{1}', default_args={{'tmp_folder':'{2}'}})\ndag.create()\ndag.add(CWLJobDispatcher(dag=dag), to='top')\ndag.add(CWLJobGatherer(dag=dag), to='bottom')"
         self.wes_state_conversion = {"running": "RUNNING", "success": "COMPLETE", "failed": "EXECUTOR_ERROR"}
         self.validated_dags = {}  # stores dags' content md5 checksums as keys and one of the statuses ["checking", "success", "error"] as values
+
+
+    def get_cwl(self, dag_id: str):
+        logging.debug(f"Call get_cwl_path with dag_id={dag_id}")
+        cwl_path = path.join(DAGS_FOLDER, dag_id + ".cwl")
+        try:
+            if not path.exists(cwl_path):
+                return connexion.problem(404, f"Dag {dag_id} not exists", "")
+            with open(cwl_path, 'rb') as f:
+                content = f.read()
+            compressed = base64.b64encode(
+                zlib.compress(content, level=9)
+            ).decode("utf-8")
+            return compressed
+        except Exception as err:
+            logging.error(f"Failed while running get_cwl_path {err}")
+            return connexion.problem(500, "Failed to read cwl path", str(err))
 
 
     def get_dags(self, dag_ids=[]):
@@ -125,7 +149,7 @@ class CWLApiBackend():
         except Exception as err:
             logging.error(f"Failed to call get_dag_runs {err}")
             return {"dag_runs": []}
-        
+
 
     def post_dag_runs(self, dag_id, run_id=None, conf=None):
         logging.debug(f"Call post_dag_runs with dag_id={dag_id}, run_id={run_id}, conf={conf}")
@@ -240,7 +264,6 @@ class CWLApiBackend():
             raise FileExistsError(f"File {location} already exist")
         data = connexion.request.files[attachment]
         data.save(location)
-    
 
     def export_dag(self, dag_id):
         """
@@ -256,6 +279,7 @@ class CWLApiBackend():
         """
 
         dag_path = path.join(DAGS_FOLDER, dag_id + ".py")
+        cwl_path = path.join(DAGS_FOLDER, dag_id + ".cwl")
 
         if path.isfile(dag_path):
             raise FileExistsError(f"File {dag_path} already exist")
@@ -268,6 +292,14 @@ class CWLApiBackend():
 
         if "workflow_content" in (connexion.request.json or []):    # json field might be None, need to take [] as default
 
+            with open(cwl_path, 'w') as f:
+                uncompressed = zlib.decompress(
+                    base64.b64decode(
+                        connexion.request.json["workflow_content"].encode("utf-8")
+                    )
+                ).decode("utf-8")
+                f.write(uncompressed)
+
             workflow = get_compressed(
                 convert_to_workflow(                                # to make sure we are not saving CommandLineTool instead of a Workflow
                     command_line_tool=fast_cwl_load(                # using fast_cwl_load is safe here because we deal with the content of a file
@@ -278,7 +310,7 @@ class CWLApiBackend():
 
         elif "workflow" in connexion.request.files:
 
-            workflow = path.join(DAGS_FOLDER, dag_id + ".cwl")
+            workflow = cwl_path
             self.save_attachment("workflow", workflow)
             convert_to_workflow(
                 command_line_tool=slow_cwl_load(                    # safer to use slow_cwl_load, because of the possible confusions with all these renaming. TODO: make it less complicate
@@ -289,7 +321,6 @@ class CWLApiBackend():
             )
 
         else:
-
             raise ValueError("At least one of the 'workflow' or \
                 'workflow_content' parameters should be set")
 
@@ -302,7 +333,7 @@ class CWLApiBackend():
 ###########################################################################
 # WES                                                                     #
 ###########################################################################
- 
+
     def wes_collect_attachments(self, run_id):
         tempdir = tempfile.mkdtemp(
             dir=get_dir(
@@ -331,7 +362,7 @@ class CWLApiBackend():
                         v.save(dest)
                     except Exception as err:
                         raise ValueError(f"Failed to process attached file {v}, {err}")
-        body = {}       
+        body = {}
         for k, ls in iterlists(connexion.request.form):
             logging.debug(f"Process form parameter {k}")
             for v in ls:
@@ -353,7 +384,7 @@ class CWLApiBackend():
 
         if "workflow_params" not in body or "workflow_url" not in body:
             raise ValueError("Missing 'workflow_params' or 'workflow_url' in submission")
-        
+
         body["workflow_url"] = path.join(tempdir, secure_filename(body["workflow_url"]))
 
         return tempdir, body
@@ -393,7 +424,7 @@ class CWLApiBackend():
         except Exception as err:
             logging.debug(f"Failed to run workflow {err}")
             return connexion.problem(500, "Failed to run workflow", str(err))
-        
+
 
     def wes_get_run_log(self, run_id):
         logging.debug(f"Call wes_get_run_log with {run_id}")

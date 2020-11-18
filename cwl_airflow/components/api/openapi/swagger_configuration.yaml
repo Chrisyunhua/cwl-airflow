@@ -10,6 +10,7 @@ consumes:
   - application/json
 produces:
   - application/json
+  - text/plain
 
 
 paths:
@@ -77,6 +78,7 @@ paths:
             $ref: "#/definitions/ErrorResponse"
       consumes:
          - multipart/form-data
+         - application/json
       parameters:
         - name: dag_id
           description: Dag identifier
@@ -92,6 +94,34 @@ paths:
           description: base64 encoded zlib compressed workflow content
           in: formData
           required: false
+          type: string
+      tags:
+        - Airflow
+
+  /cwl/{dag_id}:
+    get:
+      summary: Returns the cwl definition of a dag
+      operationId: get_cwl
+      produces:
+        - text/plain
+      responses:
+        "200":
+          description: Return the cwl definition of the dag
+          schema:
+            $ref: "#/definitions/GetCwlPathResponse"
+        "404":
+          description: The dag is not found.
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+        "500":
+          description: An unexpected error occurred.
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+      parameters:
+        - name: dag_id
+          description: Dag identifier
+          in: path
+          required: true
           type: string
       tags:
         - Airflow
@@ -194,7 +224,7 @@ paths:
       tags:
         - Airflow
 
-  # delete this path if not actively used 
+  # delete this path if not actively used
   /dags/{dag_id}/dag_runs:
     post:
       summary: Creates new dag_run for dag_id with optional run_id and conf
@@ -366,7 +396,7 @@ paths:
         be able to access URLs supplied in the input.  This is
         implementation specific.
         The `workflow_type` is the type of workflow language and
-        must be "CWL" or "WDL" currently (or another alternative 
+        must be "CWL" or "WDL" currently (or another alternative
         supported by this WES instance).
         The `workflow_type_version` is the version of the workflow language
         submitted and must be one supported by this WES instance.
@@ -496,14 +526,14 @@ paths:
           required: true
           type: string
       tags:
-        - WorkflowExecutionService        
+        - WorkflowExecutionService
 
   /wes/runs/{run_id}/status:
     get:
       summary: Get quick status info about a workflow run.
       description: >-
         This provides an abbreviated (and likely fast depending on implementation)
-        status of the running workflow, returning a simple result with the 
+        status of the running workflow, returning a simple result with the
         overall state of the workflow run (e.g. RUNNING, see the State section).
       operationId: wes_get_run_status
       responses:
@@ -537,6 +567,9 @@ paths:
 
 
 definitions:
+
+  GetCwlPathResponse:
+    type: string
 
   GetDagsResponse:
     type: object
@@ -696,8 +729,8 @@ definitions:
           type: string
         description: >-
           The filesystem protocols supported by this service, currently these may include common
-          protocols using the terms "http", "https", "sftp", "s3", "gs", "file", or "synapse", but others 
-          are possible and the terms beyond these core protocols are currently not fixed.  
+          protocols using the terms "http", "https", "sftp", "s3", "gs", "file", or "synapse", but others
+          are possible and the terms beyond these core protocols are currently not fixed.
           This section reports those protocols (either common or not) supported by this WES service.
       workflow_engine_versions:
         type: object
@@ -724,7 +757,7 @@ definitions:
         type: string
         description: >-
           A web page URL with human-readable instructions on how to get an
-          authorization token for use with a specific WES endpoint.          
+          authorization token for use with a specific WES endpoint.
       contact_info_url:
         type: string
         description: >-
