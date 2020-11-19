@@ -741,6 +741,7 @@ definitions:
      - start_date
      - state
      - tasks
+     - conf
     properties:
       dag_id:
         type: string
@@ -763,6 +764,9 @@ definitions:
               type: string
             state:
               $ref: "#/definitions/TaskState"
+      conf:
+        type: string
+        description: Run configuration (JSON-formatted string)
     description: Dag run info
 
   DagRunState:

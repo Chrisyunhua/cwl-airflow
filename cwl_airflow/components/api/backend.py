@@ -192,6 +192,9 @@ class CWLApiBackend:
                         "start_date": dag_run["start_date"],
                         "state": dag_run["state"],
                         "tasks": [],
+                        "conf": json.dumps(
+                            dag_run["conf"], indent=2, ensure_ascii=False
+                        ),
                     }
                     logging.debug(f"Get statuses for tasks {task_ids}")
                     for t_id in task_ids:
