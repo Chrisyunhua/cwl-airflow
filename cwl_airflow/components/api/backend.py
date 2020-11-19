@@ -6,11 +6,13 @@ import re
 import shutil
 import string
 import tempfile
+import traceback
 import zlib
 from os import environ, path
 from subprocess import DEVNULL, CalledProcessError, check_call
 from time import sleep
 from typing import List, Optional
+from urllib.parse import unquote
 
 import connexion
 import cwltool.load_tool as load  # TODO: use my functions instead
@@ -152,6 +154,12 @@ class CWLApiBackend:
             f"run_id={run_id}, execution_date={execution_date}, state={state}, "
             f"match={match}, limit={limit}, offset={offset}"
         )
+        if run_id:
+            run_id = unquote(run_id)
+        if dag_id:
+            dag_id = unquote(dag_id)
+        if execution_date:
+            execution_date = unquote(execution_date)
         try:
             dag_runs = []
             dag_bag = DagBag(include_examples=self.include_examples)
@@ -167,7 +175,7 @@ class CWLApiBackend:
                 logging.debug(f"Process dag  {d_id}")
                 task_ids = self.list_tasks(d_id, dag_bag=dag_bag)
                 logging.debug(f"Fetched tasks {task_ids}")
-                for dag_run in self.list_dag_runs(d_id, state):
+                for dag_run in self.list_dag_runs(d_id, state, run_id=run_id):
                     if len(dag_runs) == limit:
                         done = True
                         break
@@ -209,16 +217,16 @@ class CWLApiBackend:
                                 ),
                             }
                         )
-                    if offset is not None:
-                        if num_skipped < offset:
-                            num_skipped += 1
-                            continue
-                        else:
-                            dag_runs.append(response_item)
+                    if offset is not None and num_skipped < offset:
+                        num_skipped += 1
+                        continue
+
+                    dag_runs.append(response_item)
                 if done:
                     break
             return {"dag_runs": dag_runs}
         except Exception as err:
+            traceback.print_exc()
             logging.error(f"Failed to call get_dag_runs {err}")
             return {"dag_runs": []}
 
@@ -363,9 +371,9 @@ class CWLApiBackend:
         task_state = task_state or "none"
         return task_state
 
-    def list_dag_runs(self, dag_id, state):
+    def list_dag_runs(self, dag_id, state, run_id=None):
         dag_runs = []
-        for dag_run in DagRun.find(dag_id=dag_id, state=state):
+        for dag_run in self.find_dag_runs(dag_id=dag_id, state=state, run_id=run_id):
             dag_runs.append(
                 {
                     "run_id": dag_run.run_id,
@@ -374,9 +382,69 @@ class CWLApiBackend:
                     "start_date": (
                         (dag_run.start_date or "") and dag_run.start_date.isoformat()
                     ),
+                    "conf": dag_run.conf,
                 }
             )
         return dag_runs
+
+    @staticmethod
+    @provide_session
+    def find_dag_runs(
+        dag_id=None,
+        run_id=None,
+        execution_date=None,
+        state=None,
+        external_trigger=None,
+        no_backfills=False,
+        session=None,
+    ):
+        """
+        Copied from `airflow.DagRun.find` with sort the dag runs by
+        execution date in descend.
+
+        Returns a set of dag runs for the given search criteria.
+
+        :param dag_id: the dag_id to find dag runs for
+        :type dag_id: int, list
+        :param run_id: defines the the run id for this dag run
+        :type run_id: str
+        :param execution_date: the execution date
+        :type execution_date: datetime.datetime
+        :param state: the state of the dag run
+        :type state: str
+        :param external_trigger: whether this dag run is externally triggered
+        :type external_trigger: bool
+        :param no_backfills: return no backfills (True), return all (False).
+            Defaults to False
+        :type no_backfills: bool
+        :param session: database session
+        :type session: sqlalchemy.orm.session.Session
+        """
+        DR = DagRun
+
+        qry = session.query(DR)
+        if dag_id:
+            qry = qry.filter(DR.dag_id == dag_id)
+        if run_id:
+            qry = qry.filter(DR.run_id == run_id)
+        if execution_date:
+            if isinstance(execution_date, list):
+                qry = qry.filter(DR.execution_date.in_(execution_date))
+            else:
+                qry = qry.filter(DR.execution_date == execution_date)
+        if state:
+            qry = qry.filter(DR.state == state)
+        if external_trigger is not None:
+            qry = qry.filter(DR.external_trigger == external_trigger)
+        if no_backfills:
+            # in order to prevent a circular dependency
+            from airflow.jobs import BackfillJob
+
+            qry = qry.filter(DR.run_id.notlike(BackfillJob.ID_PREFIX + "%"))
+
+        dr = qry.order_by(DR.execution_date.desc()).all()
+
+        return dr
 
     @staticmethod
     @provide_session
@@ -585,14 +653,14 @@ class CWLApiBackend:
             return connexion.problem(500, "Failed to run workflow", str(err))
 
     def wes_get_run_log(self, run_id):
+        print(run_id)
         logging.debug(f"Call wes_get_run_log with {run_id}")
         try:
-            dag_run_info = self.get_dag_runs(dag_id=run_id, run_id=run_id)["dag_runs"][
-                0
-            ]
-            dag_run = DagRun.find(dag_id=run_id, state=None)[0]
+            dag_run_info = self.get_dag_runs(run_id=run_id)["dag_runs"][0]
+            dag_run = DagRun.find(run_id=run_id, state=None)[0]
             workflow_params = dag_run.conf["job"]
-            del workflow_params["id"]
+            if "id" in workflow_params:
+                del workflow_params["id"]
             workflow_outputs = {}
             try:
                 results_location = dag_run.get_task_instance(
