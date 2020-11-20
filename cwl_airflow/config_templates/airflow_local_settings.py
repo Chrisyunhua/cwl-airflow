@@ -22,12 +22,11 @@
 # with added cwltool logger and handler
 
 import os
+from pathlib import Path
 from typing import Any, Dict
 
 import six
-from airflow import AirflowException
 from airflow.configuration import conf
-from airflow.utils.file import mkdirs
 
 # TODO: Logging format and level should be configured
 # in this file instead of from airflow.cfg. Currently
@@ -153,7 +152,7 @@ if os.environ.get("CONFIG_PROCESSOR_MANAGER_LOGGER") == "True":
         "processor_manager"
     ]
     directory = os.path.dirname(processor_manager_handler_config["filename"])
-    mkdirs(directory, 0o755)
+    Path(directory).mkdir(mode=0o755, exist_ok=True, parents=True)
 
 ##################
 # Remote logging #
@@ -234,7 +233,7 @@ if REMOTE_LOGGING:
 
         DEFAULT_LOGGING_CONFIG["handlers"].update(ELASTIC_REMOTE_HANDLERS)
     else:
-        raise AirflowException(
+        raise Exception(
             "Incorrect remote log configuration. Please check the configuration of option 'host' in "
             "section 'elasticsearch' if you are using Elasticsearch. In the other case, "
             "'remote_base_log_folder' option in 'logging' section."
