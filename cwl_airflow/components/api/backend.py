@@ -311,7 +311,9 @@ class CWLApiBackend:
             raise ValueError(f"dag_run {run_id} for dag_id {dag_id} already exists")
         else:
             run_conf = conf if isinstance(conf, dict) else json.loads(conf)
-            dag_run = DagRun(dag_id=dag_id, run_id=run_id, conf=run_conf)
+            dag_run = DagRun(
+                dag_id=dag_id, run_id=run_id, conf=run_conf, run_type="cwl"
+            )
             session.add(dag_run)
             session.commit()
             return dag_run
