@@ -1,23 +1,24 @@
 #! /usr/bin/env python3
 import json
-import jwt
 import logging
 
+import jwt
 from airflow.models import Variable
+from airflow.providers.http.hooks.http import HttpHook
 from airflow.utils.state import State
-from airflow.hooks.http_hook import HttpHook
-
 
 CONN_ID = "process_report"
 ROUTES = {
     "progress": "airflow/progress",
-    "results":  "airflow/results",
-    "status":   "airflow/status"
+    "results": "airflow/results",
+    "status": "airflow/status",
 }
 PRIVATE_KEY = "process_report_private_key"
 ALGORITHM = "process_report_algorithm"
 
-http_hook = HttpHook(method="POST", http_conn_id=CONN_ID)  # won't fail even if CONN_ID doesn't exist
+http_hook = HttpHook(
+    method="POST", http_conn_id=CONN_ID
+)  # won't fail even if CONN_ID doesn't exist
 
 
 def sign_with_jwt(data):
@@ -25,7 +26,7 @@ def sign_with_jwt(data):
         data = jwt.encode(
             payload=data,
             key=Variable.get(PRIVATE_KEY),
-            algorithm=Variable.get(ALGORITHM)
+            algorithm=Variable.get(ALGORITHM),
         ).decode("utf-8")
     except Exception as err:
         logging.debug(f"Failed to sign data with JWT key. \n {err}")
@@ -37,14 +38,16 @@ def post_progress(context, from_task=None):
     try:
         dag_run = context["dag_run"]
         len_tis = len(dag_run.get_task_instances())
-        len_tis_success = len(dag_run.get_task_instances(state=State.SUCCESS)) + int(from_task)
+        len_tis_success = len(dag_run.get_task_instances(state=State.SUCCESS)) + int(
+            from_task
+        )
         data = sign_with_jwt(
             {
                 "state": dag_run.state,
                 "dag_id": dag_run.dag_id,
                 "run_id": dag_run.run_id,
                 "progress": int(len_tis_success / len_tis * 100),
-                "error": context["reason"] if dag_run.state == State.FAILED else ""
+                "error": context["reason"] if dag_run.state == State.FAILED else "",
             }
         )
         http_hook.run(endpoint=ROUTES["progress"], json={"payload": data})
@@ -71,11 +74,7 @@ def post_results(context):
         except Exception as err:
             logging.debug(f"Failed to read results. \n {err}")
         data = sign_with_jwt(
-            {
-                "dag_id": dag_run.dag_id,
-                "run_id": dag_run.run_id,
-                "results": results
-            }
+            {"dag_id": dag_run.dag_id, "run_id": dag_run.run_id, "results": results}
         )
         http_hook.run(endpoint=ROUTES["results"], json={"payload": data})
     except Exception as err:
@@ -91,7 +90,7 @@ def post_status(context):
                 "state": ti.state,
                 "dag_id": dag_run.dag_id,
                 "run_id": dag_run.run_id,
-                "task_id": ti.task_id
+                "task_id": ti.task_id,
             }
         )
         http_hook.run(endpoint=ROUTES["status"], json={"payload": data})
